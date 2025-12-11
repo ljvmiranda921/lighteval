@@ -30,6 +30,7 @@ from typing import Coroutine, Optional
 import torch
 from pydantic import NonNegativeFloat, NonNegativeInt, PositiveInt
 from tqdm import tqdm
+from vllm.inputs.data import TokensPrompt
 
 from lighteval.data import GenerativeTaskDataset, LoglikelihoodDataset
 from lighteval.models.abstract_model import LightevalModel, ModelConfig
@@ -63,9 +64,9 @@ if is_package_available("vllm"):
 else:
     from unittest.mock import Mock
 
-    LLM = SamplingParams = get_tokenizer = ray = distribute = destroy_distributed_environment = (
-        destroy_model_parallel
-    ) = Mock()
+    LLM = SamplingParams = get_tokenizer = ray = distribute = (
+        destroy_distributed_environment
+    ) = destroy_model_parallel = Mock()
     AsyncLLM = AsyncEngineArgs = RequestOutput = Mock()
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -159,9 +160,15 @@ class VLLMModelConfig(ModelConfig):
     dtype: str = "bfloat16"
     tensor_parallel_size: PositiveInt = 1  # how many GPUs to use for tensor parallelism
     data_parallel_size: PositiveInt = 1  # how many GPUs to use for data parallelism
-    pipeline_parallel_size: PositiveInt = 1  # how many GPUs to use for pipeline parallelism
-    gpu_memory_utilization: NonNegativeFloat = 0.9  # lower this if you are running out of memory
-    enable_prefix_caching: bool = None  # whether to enable prefix caching to speed up generation. May use more memory. Should be disabled for LFM2
+    pipeline_parallel_size: PositiveInt = (
+        1  # how many GPUs to use for pipeline parallelism
+    )
+    gpu_memory_utilization: NonNegativeFloat = (
+        0.9  # lower this if you are running out of memory
+    )
+    enable_prefix_caching: bool = (
+        None  # whether to enable prefix caching to speed up generation. May use more memory. Should be disabled for LFM2
+    )
     max_model_length: PositiveInt | None = (
         None  # maximum length of the model, ussually infered automatically. reduce this if you encouter OOM issues, 4096 is usually enough
     )
@@ -174,11 +181,17 @@ class VLLMModelConfig(ModelConfig):
     multichoice_continuations_start_space: bool = (
         True  # whether to add a space at the start of each continuation in multichoice generation
     )
-    pairwise_tokenization: bool = False  # whether to tokenize the context and continuation separately or together.
-    max_num_seqs: PositiveInt = 128  # maximum number of sequences per iteration; This variable and `max_num_batched_tokens` effectively control the batch size at prefill stage. See https://github.com/vllm-project/vllm/issues/2492 for detailed explaination.
+    pairwise_tokenization: bool = (
+        False  # whether to tokenize the context and continuation separately or together.
+    )
+    max_num_seqs: PositiveInt = (
+        128  # maximum number of sequences per iteration; This variable and `max_num_batched_tokens` effectively control the batch size at prefill stage. See https://github.com/vllm-project/vllm/issues/2492 for detailed explaination.
+    )
     max_num_batched_tokens: PositiveInt = 2048  # maximum number of tokens per batch
     subfolder: str | None = None
-    is_async: bool = False  # Whether to use the async version or sync version of the model
+    is_async: bool = (
+        False  # Whether to use the async version or sync version of the model
+    )
     override_chat_template: bool = None
 
 
@@ -191,11 +204,16 @@ class VLLMModel(LightevalModel):
         """Initializes a HuggingFace `AutoModel` and `AutoTokenizer` for evaluation."""
         self.config = config
         self.use_chat_template = uses_chat_template(
-            model_name=config.model_name, override_chat_template=config.override_chat_template
+            model_name=config.model_name,
+            override_chat_template=config.override_chat_template,
         )
         self.data_parallel_size = config.data_parallel_size
         self.tensor_parallel_size = config.tensor_parallel_size
-        self._add_special_tokens = config.add_special_tokens if config.add_special_tokens is not None else False
+        self._add_special_tokens = (
+            config.add_special_tokens
+            if config.add_special_tokens is not None
+            else False
+        )
         self._tokenizer = self._create_auto_tokenizer(config)
 
         self._max_length = (
@@ -206,7 +224,9 @@ class VLLMModel(LightevalModel):
         self.model = self._create_auto_model(config)
 
         # self._device = config.accelerator.device if config.accelerator is not None else "cpu"
-        self.multichoice_continuations_start_space = config.multichoice_continuations_start_space
+        self.multichoice_continuations_start_space = (
+            config.multichoice_continuations_start_space
+        )
 
         self.model_name = _simplify_name(config.model_name)
         self.model_sha = ""
@@ -214,7 +234,9 @@ class VLLMModel(LightevalModel):
 
         self.pairwise_tokenization = config.pairwise_tokenization
 
-        self.prompt_manager = PromptManager(self.use_chat_template, self.tokenizer, config.system_prompt)
+        self.prompt_manager = PromptManager(
+            self.use_chat_template, self.tokenizer, config.system_prompt
+        )
 
         # Initialize cache for tokenization and predictions
         self._cache = SampleCache(config)
@@ -253,7 +275,8 @@ class VLLMModel(LightevalModel):
             "model": config.model_name,
             "gpu_memory_utilization": config.gpu_memory_utilization,
             "enable_prefix_caching": config.enable_prefix_caching,
-            "revision": config.revision + (f"/{config.subfolder}" if config.subfolder is not None else ""),
+            "revision": config.revision
+            + (f"/{config.subfolder}" if config.subfolder is not None else ""),
             "dtype": config.dtype,
             "trust_remote_code": config.trust_remote_code,
             "tensor_parallel_size": config.tensor_parallel_size,
@@ -297,7 +320,8 @@ class VLLMModel(LightevalModel):
 
     def _create_auto_tokenizer(self, config: VLLMModelConfig):
         tokenizer = get_tokenizer(
-            config.tokenizer or config.model_name,  # use HF tokenizer for non-HF models, like GGUF model.
+            config.tokenizer
+            or config.model_name,  # use HF tokenizer for non-HF models, like GGUF model.
             tokenizer_mode="auto",
             trust_remote_code=config.trust_remote_code,
             revision=config.revision,
@@ -324,7 +348,9 @@ class VLLMModel(LightevalModel):
         self,
         docs: list[Doc],
     ) -> list[ModelResponse]:
-        dataset = GenerativeTaskDataset(requests=docs, num_dataset_splits=self.DATASET_SPLITS)
+        dataset = GenerativeTaskDataset(
+            requests=docs, num_dataset_splits=self.DATASET_SPLITS
+        )
         results = []
 
         for split in tqdm(
@@ -343,11 +369,16 @@ class VLLMModel(LightevalModel):
                 # the case! Because of that we only use batch size of 1
                 stop_tokens = split[0].stop_sequences or []
 
-            max_new_tokens = self.config.generation_parameters.max_new_tokens or split[0].generation_size
+            max_new_tokens = (
+                self.config.generation_parameters.max_new_tokens
+                or split[0].generation_size
+            )
             num_samples = split[0].num_samples
 
             context = [self.prompt_manager.prepare_prompt(doc) for doc in split]
-            tokenized = self.tokenizer(context, add_special_tokens=self.add_special_tokens)
+            tokenized = self.tokenizer(
+                context, add_special_tokens=self.add_special_tokens
+            )
 
             # The main question for this step is the following:
             # Would we rather truncate the prompt to allow generation to go to max_new_tokens, at the risk
@@ -391,7 +422,9 @@ class VLLMModel(LightevalModel):
             )
 
             for i, vllm_output in enumerate(vllm_outputs):
-                output_token_ids = [outputs.token_ids for outputs in vllm_output.outputs]
+                output_token_ids = [
+                    outputs.token_ids for outputs in vllm_output.outputs
+                ]
                 result = [output.text for output in vllm_output.outputs]
                 input_token_ids = vllm_output.prompt_token_ids
 
@@ -415,7 +448,11 @@ class VLLMModel(LightevalModel):
         generate: bool = True,
     ) -> list:
         """Contains the actual logic of the generation."""
-        sampling_params = SamplingParams(**self.config.generation_parameters.to_vllm_dict())
+        # Wrap inputs with TokensPrompt to make compatible with VLLM >= 0.10.2
+        inputs = [TokensPrompt(prompt_token_ids=token_ids) for token_ids in inputs]
+        sampling_params = SamplingParams(
+            **self.config.generation_parameters.to_vllm_dict()
+        )
 
         if generate:
             sampling_params.n = num_samples
@@ -435,9 +472,11 @@ class VLLMModel(LightevalModel):
         if self.data_parallel_size > 1:
 
             @ray.remote(num_gpus=self.tensor_parallel_size)
-            def run_inference_one_model(model_args: dict, sampling_params: SamplingParams, requests):
+            def run_inference_one_model(
+                model_args: dict, sampling_params: SamplingParams, requests
+            ):
                 llm = LLM(**model_args)
-                return llm.generate(prompt_token_ids=requests, sampling_params=sampling_params)
+                return llm.generate(requests, sampling_params=sampling_params)
 
             # dispatch requests to all self.data_parallel_size workers, in interleaved fashion
             # interleaved important to balance context lengths across workers
@@ -450,12 +489,14 @@ class VLLMModel(LightevalModel):
             # flatten results
             outputs = [
                 x
-                for x in itertools.chain.from_iterable(itertools.zip_longest(*[list(x) for x in results]))
+                for x in itertools.chain.from_iterable(
+                    itertools.zip_longest(*[list(x) for x in results])
+                )
                 if x is not None
             ]
         else:
             outputs = self.model.generate(
-                prompt_token_ids=inputs,
+                inputs,
                 sampling_params=sampling_params,
                 use_tqdm=True,
             )
@@ -484,7 +525,9 @@ class VLLMModel(LightevalModel):
                 tokenized_contexts, tokenized_continuations = self.tok_encode_pair(
                     context, doc.choices, pairwise=self.pairwise_tokenization
                 )
-                for tokenized_context, tokenized_continuation in zip(tokenized_contexts, tokenized_continuations):
+                for tokenized_context, tokenized_continuation in zip(
+                    tokenized_contexts, tokenized_continuations
+                ):
                     inputs.append(tokenized_context + tokenized_continuation)
                     tokenized_continuations_batch.append(tokenized_continuation)
                     tokenized_contexts_batch.append(tokenized_context)
@@ -497,8 +540,12 @@ class VLLMModel(LightevalModel):
             flat_index = 0
             for i, doc in enumerate(split):
                 outputs_doc = outputs[flat_index : flat_index + len(doc.choices)]
-                tokenized_continuations_doc = tokenized_continuations_batch[flat_index : flat_index + len(doc.choices)]
-                tokenized_contexts_doc = tokenized_contexts_batch[flat_index : flat_index + len(doc.choices)]
+                tokenized_continuations_doc = tokenized_continuations_batch[
+                    flat_index : flat_index + len(doc.choices)
+                ]
+                tokenized_contexts_doc = tokenized_contexts_batch[
+                    flat_index : flat_index + len(doc.choices)
+                ]
                 logprobs_doc = []
                 argmax_doc = []
                 output_tokens_doc = []
@@ -508,11 +555,17 @@ class VLLMModel(LightevalModel):
                     outputs_doc, tokenized_contexts_doc, tokenized_continuations_doc
                 ):
                     continuation_logprobs = []
-                    for token, logprobs in zip(continuation[::-1], output.prompt_logprobs[::-1]):
+                    for token, logprobs in zip(
+                        continuation[::-1], output.prompt_logprobs[::-1]
+                    ):
                         continuation_logprobs.append(logprobs[token])
 
-                    bool_score = all(logprob.rank == 1 for logprob in continuation_logprobs)
-                    continuation_logprobs = [logprob.logprob for logprob in continuation_logprobs]
+                    bool_score = all(
+                        logprob.rank == 1 for logprob in continuation_logprobs
+                    )
+                    continuation_logprobs = [
+                        logprob.logprob for logprob in continuation_logprobs
+                    ]
                     continuation_logprobs = sum(continuation_logprobs)
                     logprobs_doc.append(continuation_logprobs)
                     argmax_doc.append(bool_score)
@@ -557,7 +610,8 @@ class AsyncVLLMModel(VLLMModel):
         self.model_args = {
             "model": config.model_name,
             "gpu_memory_utilization": config.gpu_memory_utilization,
-            "revision": config.revision + (f"/{config.subfolder}" if config.subfolder is not None else ""),
+            "revision": config.revision
+            + (f"/{config.subfolder}" if config.subfolder is not None else ""),
             "dtype": config.dtype,
             "trust_remote_code": config.trust_remote_code,
             "tensor_parallel_size": config.tensor_parallel_size,
@@ -589,7 +643,9 @@ class AsyncVLLMModel(VLLMModel):
         generative: bool,
     ) -> Coroutine[None, list, str]:
         """Contains the actual logic of the generation."""
-        sampling_params = SamplingParams(**self.config.generation_parameters.to_vllm_dict())
+        sampling_params = SamplingParams(
+            **self.config.generation_parameters.to_vllm_dict()
+        )
 
         if not generative:
             sampling_params.temperature = 0
@@ -605,13 +661,17 @@ class AsyncVLLMModel(VLLMModel):
                 logger.warning(
                     "Careful, there can be unexpected behavior when using sampling evals with the async vllm model"
                 )
-            sampling_params.max_tokens = self.config.generation_parameters.max_new_tokens or doc.generation_size
+            sampling_params.max_tokens = (
+                self.config.generation_parameters.max_new_tokens or doc.generation_size
+            )
             sampling_params.stop = [] if self.use_chat_template else doc.stop_sequences
             sampling_params.logprobs = int(doc.use_logits)
             prompt = self.prompt_manager.prepare_prompt(doc)
             index_str = f"generative_{index}"
 
-        generator = self.model.generate(request_id=index_str, prompt=prompt, sampling_params=sampling_params)
+        generator = self.model.generate(
+            request_id=index_str, prompt=prompt, sampling_params=sampling_params
+        )
         try:
             while output := await anext(generator):
                 continue
@@ -622,7 +682,8 @@ class AsyncVLLMModel(VLLMModel):
 
     async def _async_batch(self, docs: list[Doc], generative: bool) -> list:
         processed_requests = [
-            self._async_one_item(index=index, doc=doc, generative=generative) for index, doc in enumerate(docs)
+            self._async_one_item(index=index, doc=doc, generative=generative)
+            for index, doc in enumerate(docs)
         ]
         results = await asyncio.gather(*processed_requests)
         return results
@@ -647,7 +708,10 @@ class AsyncVLLMModel(VLLMModel):
         for response in responses:
             output_token_ids = [outputs.token_ids for outputs in response.outputs]
             full_logprobs = [output.logprobs for output in response.outputs] or []
-            logprobs = [logprob[token_id].logprob for token_id, logprob in zip(output_token_ids[0], full_logprobs[0])]
+            logprobs = [
+                logprob[token_id].logprob
+                for token_id, logprob in zip(output_token_ids[0], full_logprobs[0])
+            ]
             result = [output.text for output in response.outputs]
             input_token_ids = response.prompt_token_ids
 
@@ -681,10 +745,14 @@ class AsyncVLLMModel(VLLMModel):
 
         for response, input in zip(responses, docs):
             continuation_logprobs = []
-            for token, logprobs in zip(input.tokenized_continuation[::-1], response.prompt_logprobs[::-1]):
+            for token, logprobs in zip(
+                input.tokenized_continuation[::-1], response.prompt_logprobs[::-1]
+            ):
                 continuation_logprobs.append(logprobs[token])
             bool_score = all(logprob.rank == 1 for logprob in continuation_logprobs)
-            continuation_logprobs = [logprob.logprob for logprob in continuation_logprobs]
+            continuation_logprobs = [
+                logprob.logprob for logprob in continuation_logprobs
+            ]
             answer = ModelResponse(
                 input_tokens=input.tokenized_context + input.tokenized_continuation,
                 output_tokens=input.tokenized_continuation,
