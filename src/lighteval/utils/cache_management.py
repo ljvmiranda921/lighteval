@@ -191,7 +191,9 @@ class SampleCache:
         Returns:
             Path: Path to the cache file for the given task and sample type
         """
-        return self.cache_dir / task_id.task_name / task_id.task_hash / f"{task_id.sampling_method.name}.parquet"
+        # Sanitize task_name by replacing invalid path characters with underscores
+        safe_task_name = task_id.task_name.replace("|", "_").replace(":", "_")
+        return self.cache_dir / safe_task_name / task_id.task_hash / f"{task_id.sampling_method.name}.parquet"
 
     def get_task_id(self, task_name: str, sampling_method: SamplingMethod) -> TaskID:
         """Returns a unique task indentifier. Depends on the task name,
