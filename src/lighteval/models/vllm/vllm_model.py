@@ -558,7 +558,18 @@ class VLLMModel(LightevalModel):
                     for token, logprobs in zip(
                         continuation[::-1], output.prompt_logprobs[::-1]
                     ):
-                        continuation_logprobs.append(logprobs[token])
+                        # Handle case where token is not in logprobs (can happen with truncation)
+                        if token not in logprobs:
+                            logger.warning(
+                                f"Token {token} not found in logprobs. This can happen when input is truncated. "
+                                f"Using a default logprob of -100.0 (very low probability)."
+                            )
+                            # Create a simple object with the same interface as vllm's logprob objects
+                            from collections import namedtuple
+                            FakeLogprob = namedtuple('FakeLogprob', ['logprob', 'rank', 'decoded_token'])
+                            continuation_logprobs.append(FakeLogprob(logprob=-100.0, rank=999, decoded_token=""))
+                        else:
+                            continuation_logprobs.append(logprobs[token])
 
                     bool_score = all(
                         logprob.rank == 1 for logprob in continuation_logprobs
