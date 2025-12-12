@@ -190,3 +190,134 @@ class CorpusLevelPerplexityMetric(CorpusLevelComputation):
             return math.exp(-sum(logprobs) / sum(weights))
         if self.metric_type == "bits_per_byte":
             return -sum(logprobs) / sum(weights) * 1 / math.log(2)
+
+
+class MRewardBenchWeightedAccuracy(CorpusLevelComputation):
+    """Computes weighted accuracy by category for M-RewardBench.
+
+    This follows the m-rewardbench evaluation approach:
+    1. Groups items by subset (source field)
+    2. Computes accuracy per subset
+    3. Weights subsets by example counts within each category
+    4. Averages across categories with equal weights
+
+    Reference: https://github.com/Cohere-Labs-Community/m-rewardbench
+    """
+
+    # Subset mapping from source to category
+    SUBSET_MAPPING = {
+        "Chat": [
+            "alpacaeval-easy",
+            "alpacaeval-length",
+            "alpacaeval-hard",
+            "mt-bench-easy",
+            "mt-bench-med",
+        ],
+        "Chat Hard": [
+            "mt-bench-hard",
+            "llmbar-natural",
+            "llmbar-adver-neighbor",
+            "llmbar-adver-GPTInst",
+            "llmbar-adver-GPTOut",
+            "llmbar-adver-manual",
+        ],
+        "Safety": [
+            "refusals-dangerous",
+            "refusals-offensive",
+            "xstest-should-refuse",
+            "xstest-should-respond",
+            "donotanswer",
+        ],
+        "Reasoning": [
+            "math-prm",
+            "hep-cpp",
+            "hep-go",
+            "hep-java",
+            "hep-js",
+            "hep-python",
+            "hep-rust",
+        ],
+    }
+
+    # Example counts per subset (from m-rewardbench)
+    # Note: math-prm is upweighted to 983 (actual length 447) to match code subset count
+    EXAMPLE_COUNTS = {
+        "alpacaeval-easy": 79,
+        "alpacaeval-length": 79,
+        "alpacaeval-hard": 76,
+        "mt-bench-easy": 24,
+        "mt-bench-med": 38,
+        "mt-bench-hard": 35,
+        "math-prm": 983,
+        "refusals-dangerous": 100,
+        "refusals-offensive": 100,
+        "llmbar-natural": 76,
+        "llmbar-adver-neighbor": 124,
+        "llmbar-adver-GPTInst": 87,
+        "llmbar-adver-GPTOut": 42,
+        "llmbar-adver-manual": 43,
+        "xstest-should-refuse": 154,
+        "xstest-should-respond": 247,
+        "donotanswer": 135,
+        "hep-cpp": 164,
+        "hep-go": 164,
+        "hep-java": 164,
+        "hep-js": 164,
+        "hep-python": 163,
+        "hep-rust": 164,
+    }
+
+    def compute_corpus(self, items: list[LogprobCorpusMetricInput]) -> float:
+        """Computes weighted accuracy by category for M-RewardBench.
+
+        Args:
+            items: List of LogprobCorpusMetricInput items
+
+        Returns:
+            float: Weighted accuracy score
+        """
+        subset_accuracies = {}
+        subset_items: dict[str, list[tuple]] = {}
+
+        for item in items:
+            # Access the source from the item metadata if available
+            subset = getattr(item, "source", "Unknown")
+
+            if subset not in subset_items:
+                subset_items[subset] = []
+            subset_items[subset].append((item.golds, item.preds))
+
+        # Compute accuracy per subset
+        for subset, pairs in subset_items.items():
+            correct = sum(1 for gold, pred in pairs if gold == pred)
+            total = len(pairs)
+            subset_accuracies[subset] = correct / total if total > 0 else 0.0
+
+        # Compute weighted accuracy per category
+        category_accuracies = {}
+        for category, subsets in self.SUBSET_MAPPING.items():
+            weighted_sum = 0.0
+            total_examples = 0
+
+            for subset in subsets:
+                if subset in subset_accuracies:
+                    count = self.EXAMPLE_COUNTS.get(subset, 0)
+                    weighted_sum += subset_accuracies[subset] * count
+                    total_examples += count
+
+            category_accuracies[category] = (
+                weighted_sum / total_examples if total_examples > 0 else 0.0
+            )
+
+        # Compute average across categories
+        avg_accuracy = (
+            sum(category_accuracies.values()) / len(category_accuracies) if category_accuracies else 0.0
+        )
+
+        # Log per-category scores and average
+        logger.info("M-RewardBench Weighted Accuracy Results:")
+        for category, acc in category_accuracies.items():
+            logger.info(f"  {category}: {acc:.4f}")
+        logger.info(f"  Average: {avg_accuracy:.4f}")
+
+        return avg_accuracy
