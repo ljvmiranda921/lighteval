@@ -201,8 +201,26 @@ class MRewardBenchWeightedAccuracy(CorpusLevelComputation):
     3. Weights subsets by example counts within each category
     4. Averages across categories with equal weights
 
+    Args:
+        category (str, optional): If specified, returns accuracy only for this category.
+            If None (default), returns the average across all categories.
+            Valid categories: "Chat", "Chat Hard", "Safety", "Reasoning"
+
     Reference: https://github.com/Cohere-Labs-Community/m-rewardbench
     """
+
+    def __init__(self, category: str | None = None):
+        """Initialize with optional category filter.
+
+        Args:
+            category: If specified, compute accuracy only for this category.
+                Must be one of: "Chat", "Chat Hard", "Safety", "Reasoning", or None
+        """
+        if category is not None and category not in ["Chat", "Chat Hard", "Safety", "Reasoning"]:
+            raise ValueError(
+                f"Category must be one of 'Chat', 'Chat Hard', 'Safety', 'Reasoning', or None. Got: {category}"
+            )
+        self.category = category
 
     # Subset mapping from source to category
     SUBSET_MAPPING = {
@@ -314,10 +332,14 @@ class MRewardBenchWeightedAccuracy(CorpusLevelComputation):
             sum(category_accuracies.values()) / len(category_accuracies) if category_accuracies else 0.0
         )
 
-        # Log per-category scores and average
-        logger.info("M-RewardBench Weighted Accuracy Results:")
-        for category, acc in category_accuracies.items():
-            logger.info(f"  {category}: {acc:.4f}")
-        logger.info(f"  Average: {avg_accuracy:.4f}")
+        # Log per-category scores and average (only when computing overall average to avoid spam)
+        if self.category is None:
+            logger.info("M-RewardBench Weighted Accuracy Results:")
+            for category, acc in category_accuracies.items():
+                logger.info(f"  {category}: {acc:.4f}")
+            logger.info(f"  Average: {avg_accuracy:.4f}")
 
+        # Return either the specific category score or the average
+        if self.category is not None:
+            return category_accuracies.get(self.category, 0.0)
         return avg_accuracy
