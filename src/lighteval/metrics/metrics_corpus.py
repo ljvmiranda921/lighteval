@@ -334,10 +334,10 @@ class MRewardBenchWeightedAccuracy(CorpusLevelComputation):
 
         # Log per-category scores and average (only when computing overall average to avoid spam)
         if self.category is None:
-            logger.info("M-RewardBench Weighted Accuracy Results:")
+            logger.debug("M-RewardBench Weighted Accuracy Results:")
             for category, acc in category_accuracies.items():
-                logger.info(f"  {category}: {acc:.4f}")
-            logger.info(f"  Average: {avg_accuracy:.4f}")
+                logger.debug(f"  {category}: {acc:.4f}")
+            logger.debug(f"  Average: {avg_accuracy:.4f}")
 
         # Return either the specific category score or the average
         if self.category is not None:
