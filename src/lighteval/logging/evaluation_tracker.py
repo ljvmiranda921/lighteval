@@ -393,8 +393,16 @@ class EvaluationTracker:
         """Pushes the experiment details (all the model predictions for every step) to the hub."""
         sanitized_model_name = self.general_config_logger.model_name.replace("/", "__")
 
+        # Add model revision to repo name if it's not "main"
+        revision_suffix = ""
+        if hasattr(self.general_config_logger.model_config, "revision"):
+            revision = self.general_config_logger.model_config.revision
+            if revision is not None and revision != "main":
+                sanitized_revision = revision.replace("/", "__").replace(":", "_")
+                revision_suffix = f"_rev_{sanitized_revision}"
+
         # "Default" detail names are the public detail names (same as results vs private-results)
-        repo_id = f"{self.hub_results_org}/details_{sanitized_model_name}"
+        repo_id = f"{self.hub_results_org}/details_{sanitized_model_name}{revision_suffix}"
         if not self.public:  # if not public, we add `_private`
             repo_id = f"{repo_id}_private"
 
