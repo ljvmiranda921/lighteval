@@ -393,18 +393,27 @@ class EvaluationTracker:
         """Pushes the experiment details (all the model predictions for every step) to the hub."""
         sanitized_model_name = self.general_config_logger.model_name.replace("/", "__")
 
-        # Add model revision to repo name if it's not "main"
-        revision_suffix = ""
+        # Use revision as the main identifier if it's not "main", otherwise use model name
         if hasattr(self.general_config_logger.model_config, "revision"):
             revision = self.general_config_logger.model_config.revision
             if revision is not None and revision != "main":
-                sanitized_revision = revision.replace("/", "__").replace(":", "_")
-                revision_suffix = f"_rev_{sanitized_revision}"
-
-        # "Default" detail names are the public detail names (same as results vs private-results)
-        repo_id = f"{self.hub_results_org}/details_{sanitized_model_name}{revision_suffix}"
-        if not self.public:  # if not public, we add `_private`
-            repo_id = f"{repo_id}_private"
+                # Sanitize revision: replace invalid chars and ensure valid format
+                sanitized_revision = revision.replace("/", "__").replace(":", "_").replace(".", "_")
+                # Remove timestamp pattern (e.g., 20251213T201429-)
+                sanitized_revision = re.sub(r"\d{8}T\d{6}-", "", sanitized_revision)
+                # Remove org prefixes (e.g., allenai_, meta_, etc.)
+                sanitized_revision = re.sub(r"^[a-zA-Z0-9]+_", "", sanitized_revision)
+                # Remove leading/trailing hyphens or underscores
+                sanitized_revision = sanitized_revision.strip("-_")
+                repo_id = f"{self.hub_results_org}/details_{sanitized_revision}"
+            else:
+                repo_id = f"{self.hub_results_org}/details_{sanitized_model_name}"
+                if not self.public:  # if not public, we add `_private`
+                    repo_id = f"{repo_id}_private"
+        else:
+            repo_id = f"{self.hub_results_org}/details_{sanitized_model_name}"
+            if not self.public:  # if not public, we add `_private`
+                repo_id = f"{repo_id}_private"
 
         fsspec_repo_uri = f"hf://datasets/{repo_id}"
 
